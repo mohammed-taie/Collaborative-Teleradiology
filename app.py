@@ -7,7 +7,7 @@ import warnings
 import pathlib
 import json
 from datetime import datetime
-
+import numpy as np
 import streamlit as st
 import pydicom
 from PIL import Image
