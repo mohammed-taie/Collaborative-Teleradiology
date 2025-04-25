@@ -137,7 +137,7 @@ if not st.session_state.authenticated:
             if u == ADMIN_USER and p == ADMIN_PASS:
                 st.session_state.authenticated = True
                 st.session_state.user = u
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Invalid credentials")
     st.stop()
@@ -147,7 +147,7 @@ with st.sidebar:
     st.markdown(f"**Logged in as:** {user}")
     if st.button("Logout"):
         st.session_state.authenticated = False
-        st.experimental_rerun()
+        st.rerun()
     st.markdown("---")
     page = st.radio("Navigation", ["Dashboard", "Upload Study", "Reporting & Collaboration"])
     st.markdown("---")
@@ -203,7 +203,7 @@ if page == "Upload Study":
 
                 load_dicom_pixel_array.clear()
             st.success(f"Upload complete! Case ID: {case_id}")
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -303,7 +303,7 @@ elif page == "Dashboard":
                             )
                             conn.commit()
                         st.success("Comment added.")
-                        st.experimental_rerun()
+                        st.rerun()
                     for usr, txt, ts in sqlite3.connect(DB_PATH).execute(
                         "SELECT user,text,timestamp FROM comments WHERE case_id=? ORDER BY timestamp", (cid,)
                     ).fetchall():
@@ -325,7 +325,7 @@ elif page == "Dashboard":
                             conn.execute("UPDATE cases SET status=? WHERE case_id=?", ("finalized", cid))
                             conn.commit()
                         st.success("Report saved & finalized.")
-                        st.experimental_rerun()
+                        st.rerun()
 
 # ----------------------------
 # --- REPORTING & COLLABORATION
