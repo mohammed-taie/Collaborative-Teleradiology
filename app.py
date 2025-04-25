@@ -252,12 +252,11 @@ elif page == "Dashboard":
                         w, h  = int(arr.shape[1]*scale), int(arr.shape[0]*scale)
                         # after
                         bg_pil = Image.fromarray(arr).resize((w, h))
-                        bg = np.array(bg_pil).tolist()   # now a nested list, which is truthy
                         canvas = st_canvas(
                             fill_color="rgba(0,0,0,0)",
                             stroke_width=thickness,
                             stroke_color="#FF0000",
-                            background_image=bg,           # a list, not an ndarray
+                            background_image=bg_pil,      # ✅ PIL.Image
                             drawing_mode=shape,
                             key=f"c{cid}_{idx}",
                             width=w,
