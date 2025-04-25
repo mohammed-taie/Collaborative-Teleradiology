@@ -1,7 +1,6 @@
 import os
 import io
 import zipfile
-import shutil
 import sqlite3
 import warnings
 import pathlib
@@ -20,21 +19,17 @@ from streamlit_drawable_canvas import st_canvas
 # ----------------------------
 st.set_page_config(page_title="🏥 AI DICOM Review", layout="wide")
 
-# File paths (can still be overridden via environment variables if needed)
 DATA_DIR = os.getenv("DATA_DIR", "data")
 DB_PATH  = os.getenv("DB_PATH",  "cases.db")
 
-# Hardcoded simple credentials
 ADMIN_USER = "admin"
 ADMIN_PASS = "password"
 
-REPORT_TEMPLATES   = ["Free-Text", "BI-RADS", "PI-RADS"]
-CANVAS_MAX_WIDTH   = 512
+REPORT_TEMPLATES = ["Free-Text", "BI-RADS", "PI-RADS"]
+CANVAS_MAX_WIDTH = 512
 
-# ensure storage
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# suppress benign pydicom warnings
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
@@ -101,7 +96,6 @@ init_db()
 # --- UTILITY FUNCTIONS
 # ----------------------------
 def safe_extract(zip_bytes: io.BytesIO, extract_to: pathlib.Path):
-    """Extract zip file, preventing Zip-Slip."""
     with zipfile.ZipFile(zip_bytes) as z:
         for member in z.infolist():
             out_path = extract_to / pathlib.Path(member.filename).name
@@ -110,10 +104,11 @@ def safe_extract(zip_bytes: io.BytesIO, extract_to: pathlib.Path):
         z.extractall(path=extract_to)
 
 def anonymize_and_save(ds: pydicom.Dataset, out_path: pathlib.Path):
-    """Strip PHI and save DICOM safely."""
     ds.remove_private_tags()
-    for tag in ["PatientName", "PatientID", "PatientBirthDate", "PatientAge",
-                "InstitutionName", "ReferringPhysicianName", "StudyDescription"]:
+    for tag in [
+        "PatientName", "PatientID", "PatientBirthDate", "PatientAge",
+        "InstitutionName", "ReferringPhysicianName", "StudyDescription"
+    ]:
         if hasattr(ds, tag):
             delattr(ds, tag)
     ds.save_as(str(out_path), write_like_original=False)
@@ -153,31 +148,31 @@ with st.sidebar:
     page = st.radio("Navigation", ["Dashboard", "Upload Study", "Reporting & Collaboration"])
     st.markdown("---")
     with st.expander("Annotation Mode"):
-        annotate = st.checkbox("Enable Annotations")
-        shape    = st.selectbox("Shape", ["freedraw", "rect", "circle", "polygon"])
-        thickness= st.slider("Stroke width", 1, 10, 3)
+        annotate  = st.checkbox("Enable Annotations")
+        shape     = st.selectbox("Shape", ["freedraw", "rect", "circle", "polygon"])
+        thickness = st.slider("Stroke width", 1, 10, 3)
 
 # ----------------------------
 # --- UPLOAD STUDY PAGE
 # ----------------------------
 if page == "Upload Study":
     st.header("📤 Upload DICOM Study (.zip)")
-    zip_file   = st.file_uploader("ZIP of DICOM files", type="zip")
-    assigned_to= st.text_input("Assign to Radiologist", value=user)
+    zip_file    = st.file_uploader("ZIP of DICOM files", type="zip")
+    assigned_to = st.text_input("Assign to Radiologist", value=user)
     if zip_file and st.button("Process Upload"):
         fname = zip_file.name
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("PRAGMA foreign_keys = ON")
             if conn.execute("SELECT 1 FROM cases WHERE original_filename=?", (fname,)).fetchone():
-                st.info("This file has already been uploaded.")
+                st.info("Already uploaded.")
                 st.stop()
         try:
             with st.spinner("Extracting and anonymizing..."):
                 with zipfile.ZipFile(zip_file) as zf:
-                    sample      = pydicom.dcmread(io.BytesIO(zf.read(zf.infolist()[0].filename)))
-                    study_uid   = sample.StudyInstanceUID
-                    patient_code= sample.get("PatientID", "UNKNOWN")
-                    modality    = sample.get("Modality", "OT")
+                    sample       = pydicom.dcmread(io.BytesIO(zf.read(zf.infolist()[0].filename)))
+                    study_uid    = sample.StudyInstanceUID
+                    patient_code = sample.get("PatientID", "UNKNOWN")
+                    modality     = sample.get("Modality", "OT")
                 upload_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
                 with sqlite3.connect(DB_PATH) as conn:
@@ -200,7 +195,7 @@ if page == "Upload Study":
                         ds = pydicom.dcmread(str(f))
                         anonymize_and_save(ds, f)
                     except Exception:
-                        continue
+                        pass
 
                 load_dicom_pixel_array.clear()
             st.success(f"Upload complete! Case ID: {case_id}")
@@ -217,8 +212,8 @@ elif page == "Dashboard":
         status_filter = st.selectbox("Status", ["All", "new", "in-review", "finalized"])
         my_only       = st.checkbox("My cases only", value=True)
 
-    query   = "SELECT case_id, patient_code, modality, upload_date, status, assigned_to FROM cases"
-    params  = []
+    # build query...
+    query, params = "SELECT case_id, patient_code, modality, upload_date, status, assigned_to FROM cases", []
     clauses = []
     if status_filter != "All":
         clauses.append("status = ?"); params.append(status_filter)
@@ -249,17 +244,19 @@ elif page == "Dashboard":
                     arr = load_dicom_pixel_array(str(dcms[idx]), dcms[idx].stat().st_mtime)
 
                     if annotate:
-                        # --- NEW: normalize to 8-bit grayscale before drawing ---
+                        # 1) compute display size
                         scale = min(1, CANVAS_MAX_WIDTH / arr.shape[1])
                         w, h  = int(arr.shape[1] * scale), int(arr.shape[0] * scale)
 
-                        # normalize DICOM to [0,255] uint8
+                        # 2) normalize & cast to 8-bit
                         arr_norm = (arr - arr.min()) / (arr.max() - arr.min())
                         arr_norm = (arr_norm * 255).astype("uint8")
 
-                        # create an 8-bit PIL image and resize
+                        # 3) build an RGB PIL image and resize
                         bg = Image.fromarray(arr_norm).convert("L").resize((w, h))
+                        bg = bg.convert("RGB")  # <--- convert to 3-channel
 
+                        # 4) draw the canvas
                         canvas = st_canvas(
                             fill_color="rgba(0,0,0,0)",
                             stroke_width=thickness,
@@ -268,6 +265,7 @@ elif page == "Dashboard":
                             drawing_mode=shape,
                             width=w,
                             height=h,
+                            update_streamlit=True,   # <--- force redraw
                             key=f"c{cid}_{idx}",
                         )
 
@@ -302,7 +300,7 @@ elif page == "Dashboard":
                         fig.update_layout(dragmode="pan", margin=dict(l=0, r=0, t=0, b=0))
                         st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
 
-                # … rest of comments & report panel unchanged …
+                # comments & report panel unchanged…
                 with col2:
                     st.subheader("💬 Comments")
                     cm = st.text_input("Add comment:", key=f"cm{cid}")
