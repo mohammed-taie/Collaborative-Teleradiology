@@ -250,12 +250,14 @@ elif page == "Dashboard":
                     if annotate:
                         scale = min(1, CANVAS_MAX_WIDTH/arr.shape[1])
                         w, h  = int(arr.shape[1]*scale), int(arr.shape[0]*scale)
-                        bg    = Image.fromarray(arr).resize((w, h))
+                        # after
+                        bg_pil = Image.fromarray(arr).resize((w, h))
+                        bg = np.array(bg_pil)                   # convert to H×W×3 array
                         canvas = st_canvas(
                             fill_color="rgba(0,0,0,0)",
                             stroke_width=thickness,
                             stroke_color="#FF0000",
-                            background_image=bg,
+                            background_image=bg,                # pass a NumPy array
                             drawing_mode=shape,
                             key=f"c{cid}_{idx}",
                             width=w,
