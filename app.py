@@ -11,6 +11,7 @@ from datetime import datetime
 import streamlit as st
 import pydicom
 from PIL import Image
+import numpy as np
 import plotly.express as px
 from streamlit_drawable_canvas import st_canvas
 
@@ -100,7 +101,6 @@ init_db()
 # --- UTILITY FUNCTIONS
 # ----------------------------
 def safe_extract(zip_bytes: io.BytesIO, extract_to: pathlib.Path):
-    """Extract zip file, preventing Zip-Slip."""
     with zipfile.ZipFile(zip_bytes) as z:
         for member in z.infolist():
             out_path = extract_to / pathlib.Path(member.filename).name
@@ -109,7 +109,6 @@ def safe_extract(zip_bytes: io.BytesIO, extract_to: pathlib.Path):
         z.extractall(path=extract_to)
 
 def anonymize_and_save(ds: pydicom.Dataset, out_path: pathlib.Path):
-    """Strip PHI and save DICOM safely."""
     ds.remove_private_tags()
     for tag in ["PatientName", "PatientID", "PatientBirthDate", "PatientAge",
                 "InstitutionName", "ReferringPhysicianName", "StudyDescription"]:
@@ -182,11 +181,12 @@ if page == "Upload Study":
                 with sqlite3.connect(DB_PATH) as conn:
                     conn.execute("PRAGMA foreign_keys = ON")
                     cur = conn.cursor()
-                    cur.execute("""
+                    cur.execute(
+                        """
                         INSERT INTO cases
                           (patient_code, study_uid, modality, upload_date, status, assigned_to, original_filename)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (patient_code, study_uid, modality, upload_date, "new", assigned_to, fname))
+                        """, (patient_code, study_uid, modality, upload_date, "new", assigned_to, fname))
                     case_id = cur.lastrowid
                     conn.commit()
 
@@ -248,15 +248,22 @@ elif page == "Dashboard":
                     arr = load_dicom_pixel_array(str(dcms[idx]), dcms[idx].stat().st_mtime)
 
                     if annotate:
+                        # scale and dimensions
                         scale = min(1, CANVAS_MAX_WIDTH/arr.shape[1])
                         w, h  = int(arr.shape[1]*scale), int(arr.shape[0]*scale)
-                        bg    = Image.fromarray(arr).resize((w, h))
+                        # normalize to 8-bit
+                        arr_norm = (arr - arr.min()) / (arr.max() - arr.min())
+                        arr_norm = (arr_norm * 255).astype("uint8")
+                        # create an 8-bit PIL image
+                        bg = Image.fromarray(arr_norm).convert("L").resize((w, h))
+                        # initialize canvas with update_streamlit
                         canvas = st_canvas(
                             fill_color="rgba(0,0,0,0)",
                             stroke_width=thickness,
                             stroke_color="#FF0000",
                             background_image=bg,
                             drawing_mode=shape,
+                            update_streamlit=True,
                             key=f"c{cid}_{idx}",
                             width=w,
                             height=h
@@ -322,7 +329,7 @@ elif page == "Dashboard":
                                 "INSERT INTO reports(case_id,user,report_text,timestamp) VALUES (?,?,?,?)",
                                 (cid, user, rpt, ts)
                             )
-                            conn.execute("UPDATE cases SET status=? WHERE case_id=?", ("finalized", cid))
+                            conn.execute("UPDATE cases SET status=? WHERE case_id?", ("finalized", cid))
                             conn.commit()
                         st.success("Report saved & finalized.")
                         st.rerun()
@@ -369,7 +376,7 @@ elif page == "Reporting & Collaboration":
                 "INSERT INTO reports(case_id,user,report_text,timestamp) VALUES (?,?,?,?)",
                 (cid, user, f"[{template}] {txt}", ts)
             )
-            conn.execute("UPDATE cases SET status=? WHERE case_id=?", ("in-review", cid))
+            conn.execute("UPDATE cases SET status=? WHERE case_id?", ("in-review", cid))
             conn.commit()
         st.success("Report saved & in-review.")
 
